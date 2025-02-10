@@ -1,7 +1,7 @@
 import asyncio
 import contextvars
 from collections.abc import Callable, Awaitable, Iterable, AsyncIterator
-from itertools import counter
+import itertools
 from typing import Any
 
 
