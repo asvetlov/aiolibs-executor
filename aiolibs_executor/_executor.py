@@ -1,7 +1,7 @@
 import asyncio
 import contextvars
-from collections.abc import Callable, Awaitable, Iterable, AsyncIterator
 import itertools
+from collections.abc import AsyncIterator, Awaitable, Callable, Iterable
 from typing import Any
 
 
@@ -9,18 +9,18 @@ class Executor:
     _counter = itertools.count().__next__
 
     def __init__(
-            self,
-            max_workers: int | None = None,
-            task_name_prefix: str = "",
-            initializer: Callable[..., Awaitable[None]] | None = None,
-            initargs: tuple[Any, ...] = (),
+        self,
+        max_workers: int | None = None,
+        task_name_prefix: str = "",
+        initializer: Callable[..., Awaitable[None]] | None = None,
+        initargs: tuple[Any, ...] = (),
     ) -> None:
         if max_workers is None:
             max_workers = 100
         if max_workers <= 0:
             raise ValueError("max_workers must be greater than 0")
         self._max_workers = max_workers
-        self._task_name_prefix = task_name_prefix or f'Executor-{self._counter()}'
+        self._task_name_prefix = task_name_prefix or f"Executor-{self._counter()}"
         if initializer is not None:
             if not callable(initializer):
                 raise TypeError("initializer must be a callable")
@@ -52,7 +52,7 @@ class Executor:
         **kwargs: P.kwargs,
     ) -> asyncio.Future[R]:
         if self._shutdown:
-            raise RuntimeError('cannot schedule new futures after shutdown')
+            raise RuntimeError("cannot schedule new futures after shutdown")
         self._lazy_init()
         loop = asyncio.get_running_loop()
         job = _Job(loop, context, None, fn, *args, **kwargs)
@@ -77,8 +77,10 @@ class Executor:
                     # Careful not to keep a reference to the popped future
                     yield await jobs.pop()
             finally:
+                # The current task was cancelled, e.g. by timeout
                 for job in jobs:
                     job.cancel()
+
         return result_iterator()
 
     async def shutdown(
@@ -138,13 +140,13 @@ class Executor:
 
 class _Job[R, **P](asyncio.Future[R]):
     def __init__(
-            self,
-            loop: asyncio.AbstractEventLoop,
-            outcome: asyncio.Queue['_Job'] | None,
-            fn: Callable[P, Awaitable[R]],
-            /,
-            *args: P.args,
-            **kwargs: P.kwargs,
+        self,
+        loop: asyncio.AbstractEventLoop,
+        outcome: asyncio.Queue["_Job"] | None,
+        fn: Callable[P, Awaitable[R]],
+        /,
+        *args: P.args,
+        **kwargs: P.kwargs,
     ) -> None:
         super().__init__(loop=loop)
         self._fn = fn

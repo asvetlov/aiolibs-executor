@@ -20,3 +20,44 @@ enable = true
 
 [tool.poetry]
 version = "0.0.0"
+[tool.poetry.group.dev.dependencies]
+mypy = "^1.15.0"
+
+[tool.ruff]
+target-version = "py313"
+
+[tool.ruff.lint]
+select = [
+    "E", "F", "I", "C90", "UP", "B", "ASYNC", "N", "A", "C4", "EM", "FA", "ICN",
+    "G", "PIE", "T20", "PYI", "PT", "RET", "PTH", "T10"
+]
+ignore = [
+  "A003",  # Class attribute "..." is shadowing a Python builtin
+  "EM101", # Exception must not use a string literal, assign to variable first
+  "N818"
+]
+
+[tool.ruff.lint.isort]
+combine-as-imports = true
+lines-after-imports = 2
+
+[tool.pytest.ini_options]
+testpaths = "tests"
+filterwarnings = """
+    error
+    """
+
+addopts = """
+    --cov=aiolibs_executor
+    --cov-report=term
+    --cov-report=xml:coverage/.coverage.xml
+"""
+
+[tool.coverage.run]
+branch = true
+source = ["aiolibs_executor"]
+
+[tool.mypy]
+files = ["aiolibs_executor", "tests"]
+strict = true
+pretty = true
