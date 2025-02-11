@@ -79,7 +79,7 @@ jobs:
     name: Approve bot PR
     runs-on: ubuntu-latest
     if: endsWith(github.actor, '[bot]')
-    needs: lint, test
+    needs: [lint, test]
     permissions:
       contents: write
       pull-requests: write
