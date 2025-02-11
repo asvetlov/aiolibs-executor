@@ -1,8 +1,20 @@
-import asyncio
 import contextvars
+import dataclasses
 import itertools
-from collections.abc import AsyncIterator, Awaitable, Callable, Iterable
+from asyncio import (
+    AbstractEventLoop,
+    CancelledError,
+    Future,
+    Queue,
+    QueueShutDown,
+    Task,
+    create_task,
+    gather,
+    get_running_loop,
+)
+from collections.abc import AsyncIterator, Callable, Coroutine, Iterable
 from typing import Any
+from warnings import catch_warnings
 
 
 class Executor:
@@ -12,64 +24,67 @@ class Executor:
         self,
         max_workers: int | None = None,
         task_name_prefix: str = "",
-        initializer: Callable[..., Awaitable[None]] | None = None,
-        initargs: tuple[Any, ...] = (),
     ) -> None:
         if max_workers is None:
             max_workers = 100
         if max_workers <= 0:
             raise ValueError("max_workers must be greater than 0")
         self._max_workers = max_workers
-        self._task_name_prefix = task_name_prefix or f"Executor-{self._counter()}"
-        if initializer is not None:
-            if not callable(initializer):
-                raise TypeError("initializer must be a callable")
-        self._initializer = initializer
-        self._initargs = initargs
+        self._task_name_prefix = task_name_prefix or f"Executor-{Executor._counter()}"
+        self._init_context = contextvars.copy_context()
         self._init = False
         self._shutdown = False
-        self._jobs: asyncio.Queue[_Job] = asyncio.Queue()
+        self._jobs: Queue[_Job[Any]] = Queue()
         # tasks are much cheaper than threads or processes,
         # there is no need for adjusting tasks count on the fly like
         # ThreadPoolExecutor or ProcessPoolExecutor do.
-        self._tasks = []
+        self._tasks: list[Task[None]] = []
 
-    def submit[R, **P](
+    def submit[R](
         self,
-        fn: Callable[P, Awaitable[R]],
-        /,
-        *args: P.args,
-        **kwargs: P.kwargs,
-    ) -> asyncio.Future[R]:
-        return self.submit_with_context(None, fn, *args, **kwargs)
-
-    def submit_with_context[R, **P](
-        self,
-        context: contextvars.Context | None,
-        fn: Callable[P, Awaitable[R]],
-        /,
-        *args: P.args,
-        **kwargs: P.kwargs,
-    ) -> asyncio.Future[R]:
-        if self._shutdown:
-            raise RuntimeError("cannot schedule new futures after shutdown")
+        coro: Coroutine[Any, Any, R],
+        *,
+        context: contextvars.Context | None = None,
+    ) -> Future[R]:
         self._lazy_init()
-        loop = asyncio.get_running_loop()
-        job = _Job(loop, context, None, fn, *args, **kwargs)
+        job = _Job(
+            get_running_loop(),
+            context if context is not None else self._init_context,
+            coro,
+        )
         self._jobs.put_nowait(job)
-        return job
+        return job.future
+
+    async def asubmit[R](
+        self,
+        coro: Coroutine[Any, Any, R],
+        *,
+        context: contextvars.Context | None = None,
+    ) -> Future[R]:
+        self._lazy_init()
+        job = _Job(
+            get_running_loop(),
+            context if context is not None else self._init_context,
+            coro,
+        )
+        await self._jobs.put(job)
+        return job.future
 
     def map[R, *IT](
         self,
-        fn: Callable[..., Awaitable[R]],
+        fn: Callable[..., Coroutine[Any, Any, R]],
         /,
         *iterables: Iterable[Any],
+        context: contextvars.Context | None = None,
     ) -> AsyncIterator[R]:
-        jobs = [self.submit(fn, *args) for args in zip(*iterables, strict=False)]
+        jobs = [
+            self.submit(fn(*args), context=context)
+            for args in zip(*iterables, strict=False)
+        ]
 
         # Yield must be hidden in closure so that the futures are submitted
         # before the first iterator value is required.
-        async def result_iterator():
+        async def result_iterator() -> AsyncIterator[R]:
             try:
                 # reverse to keep finishing order
                 jobs.reverse()
@@ -96,75 +111,103 @@ class Executor:
             # Drain all work items from the queue, and then cancel their
             # associated futures.
             while not self._jobs.empty():
-                job = self._jobs.get_nowait()
-                if not job.done():
-                    job.cancel()
-                del job
+                self._jobs.get_nowait().cancel()
 
         self._jobs.shutdown()
-        if wait:
-            rets = await asyncio.gather(self._tasks, return_exceptions=True)
-            excs = [exc for exc in rets if isinstance(exc, BaseException)]
-            if excs:
-                try:
-                    raise BaseExceptionGroup(
-                        "unhandled errors during Executor.shutdown()",
-                        excs,
-                    ) from None
-                finally:
-                    excs = None
+        if not wait:
+            for task in self._tasks:
+                if not task.done():
+                    task.cancel()
+
+        rets = await gather(*self._tasks, return_exceptions=True)
+        excs = [
+            exc
+            for exc in rets
+            if isinstance(exc, BaseException) and type(exc) is not CancelledError
+        ]
+        if excs:
+            try:
+                raise BaseExceptionGroup(
+                    "unhandled errors during Executor.shutdown()",
+                    excs,
+                ) from None
+            finally:
+                del excs
 
     def _lazy_init(self) -> None:
         # Lazy init exists for allowing Executor instantiation then there is no
         # active event loop yet.
         # .submit(), .map(), and .shutdown() all require running loop though.
+        if self._shutdown:
+            raise RuntimeError("cannot schedule new futures after shutdown")
         if self._init:
             return
         self._init = True
         for i in range(self._max_workers):
             task_name = self._task_name_prefix + f"_{i}"
-            self._tasks.append(asyncio.create_task(self._work(), name=task_name))
+            self._tasks.append(
+                create_task(
+                    self._work(task_name), name=task_name, context=self._init_context
+                )
+            )
 
-    async def _work(self) -> None:
+    async def _work(self, prefix: str) -> None:
         try:
-            if self._initializer is not None:
-                await self._initializer(*self._initargs)
             while True:
-                job = self._jobs.get()
-                await job._execute()
-                await self._outcome.put(job)
-                del job
-        except asyncio.QueueShutDown:
+                await (await self._jobs.get()).execute(prefix)
+        except QueueShutDown:
             pass
 
 
-class _Job[R, **P](asyncio.Future[R]):
-    def __init__(
-        self,
-        loop: asyncio.AbstractEventLoop,
-        outcome: asyncio.Queue["_Job"] | None,
-        fn: Callable[P, Awaitable[R]],
-        /,
-        *args: P.args,
-        **kwargs: P.kwargs,
-    ) -> None:
-        super().__init__(loop=loop)
-        self._fn = fn
-        self._args = args
-        self._kwargs = kwargs
-        self._outcome = outcome
+@dataclasses.dataclass
+class _Job[R]:
+    loop: AbstractEventLoop
+    context: contextvars.Context
+    coro: Coroutine[Any, Any, R]
 
-    async def _execute(self) -> R:
+    def __post_init__(self) -> None:
+        self.future: Future[R] = self.loop.create_future()
+
+    async def execute(self, prefix: str) -> None:
+        fut = self.future
+        if fut.done():
+            return
         try:
-            ret = await self._fn(*self._args, **self._kwargs)
+            name = prefix
+            try:
+                name += f" [{self.coro.__qualname__}]"
+            except AttributeError:
+                pass
+            task = self.loop.create_task(
+                self.coro,
+                context=self.context,
+                name=name,
+            )
+            fut.add_done_callback(_sync(task))
+            ret = await task
         except BaseException as ex:
-            if not self.done():
-                self.set_exception(ex)
+            if not fut.done():
+                fut.set_exception(ex)
         else:
-            if not self.done():
-                self.set_result(ret)
-        if self._outcome is not None:
-            # executor.map() mode
-            self._outcome.put(self)
-            # break cycle reference
-            self._outcome = None
+            if not fut.done():
+                fut.set_result(ret)
+
+    def cancel(self) -> None:
+        fut = self.future
+        if not fut.done():
+            fut.cancel()
+        with catch_warnings(action="ignore", category=RuntimeWarning):
+            # Suppress RuntimeWarning: coroutine 'coro' was never awaited.
+            # The warning is possible if .shutdown() was called
+            # with cancel_futures=True and there are non-started coroutines
+            # in pedning jobs list.
+            del self.coro
+
+
+def _sync[R](task: Task[R]) -> Callable[[Future[R]], None]:
+    def f(fut: Future[R]) -> None:
+        if fut.cancelled():
+            if not task.done():
+                task.cancel()
+
+    return f
