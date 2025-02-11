@@ -12,7 +12,13 @@ from asyncio import (
     gather,
     get_running_loop,
 )
-from collections.abc import AsyncIterator, Callable, Coroutine, Iterable
+from collections.abc import (
+    AsyncIterable,
+    AsyncIterator,
+    Callable,
+    Coroutine,
+    Iterable,
+)
 from typing import Any
 from warnings import catch_warnings
 
@@ -84,6 +90,29 @@ class Executor:
         jobs = [
             await self.submit(fn(*args), context=context)
             for args in zip(*iterables, strict=False)
+        ]
+
+        try:
+            # reverse to keep finishing order
+            jobs.reverse()
+            while jobs:
+                # Careful not to keep a reference to the popped future
+                yield await jobs.pop()
+        finally:
+            # The current task was cancelled, e.g. by timeout
+            for job in jobs:
+                job.cancel()
+
+    async def amap[R, *IT](
+        self,
+        fn: Callable[..., Coroutine[Any, Any, R]],
+        /,
+        *iterables: AsyncIterable[Any],
+        context: contextvars.Context | None = None,
+    ) -> AsyncIterator[R]:
+        jobs = [
+            await self.submit(fn(*args), context=context)
+            async for args in _azip(*iterables)
         ]
 
         try:
@@ -213,3 +242,13 @@ def _sync[R](task: Task[R]) -> Callable[[Future[R]], None]:
                 task.cancel()
 
     return f
+
+
+async def _azip(*iterables: AsyncIterable[Any]) -> AsyncIterator[Any]:
+    its = [aiter(ait) for ait in iterables]
+    while True:
+        try:
+            items = [await anext(it) for it in its]
+            yield tuple(items)
+        except StopAsyncIteration:
+            break

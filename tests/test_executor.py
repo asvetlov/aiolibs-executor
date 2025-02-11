@@ -1,5 +1,6 @@
 import asyncio
 import unittest
+from collections.abc import AsyncIterator
 from typing import Any
 
 from aiolibs_executor import Executor
@@ -45,6 +46,32 @@ class TestExecutor(unittest.IsolatedAsyncioTestCase):
 
         fut = await executor.submit(f(1, a=2))
         self.assertEqual(await fut, ((1,), {"a": 2}))
+
+    async def test_map(self) -> None:
+        executor = self.make_executor()
+
+        async def f(a: int, b: int) -> int:
+            await asyncio.sleep(0)
+            return a + b
+
+        arg = list(range(3))
+        ret = [i async for i in executor.map(f, arg, arg)]
+        self.assertEqual(ret, [0, 2, 4])
+
+    async def test_amap(self) -> None:
+        executor = self.make_executor()
+
+        async def f(a: int, b: int) -> int:
+            await asyncio.sleep(0)
+            return a + b
+
+        async def inp() -> AsyncIterator[int]:
+            for i in range(1, 4):
+                await asyncio.sleep(0)
+                yield i
+
+        ret = [i async for i in executor.amap(f, inp(), inp())]
+        self.assertEqual(ret, [2, 4, 6])
 
 
 if __name__ == "__main__":
