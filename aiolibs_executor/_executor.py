@@ -44,7 +44,7 @@ class Executor:
         self._init_context = contextvars.copy_context()
         self._init = False
         self._shutdown = False
-        self._jobs: Queue[_Job[Any]] = Queue(max_pending)
+        self._work_items: Queue[_WorkItem[Any]] = Queue(max_pending)
         # tasks are much cheaper than threads or processes,
         # there is no need for adjusting tasks count on the fly like
         # ThreadPoolExecutor or ProcessPoolExecutor do.
@@ -57,13 +57,13 @@ class Executor:
         context: contextvars.Context | None = None,
     ) -> Future[R]:
         self._lazy_init()
-        job = _Job(
+        work_item = _WorkItem(
             get_running_loop(),
             context if context is not None else self._init_context,
             coro,
         )
-        self._jobs.put_nowait(job)
-        return job.future
+        self._work_items.put_nowait(work_item)
+        return work_item.future
 
     async def submit[R](
         self,
@@ -72,13 +72,13 @@ class Executor:
         context: contextvars.Context | None = None,
     ) -> Future[R]:
         self._lazy_init()
-        job = _Job(
+        work_item = _WorkItem(
             get_running_loop(),
             context if context is not None else self._init_context,
             coro,
         )
-        await self._jobs.put(job)
-        return job.future
+        await self._work_items.put(work_item)
+        return work_item.future
 
     async def map[R, *IT](
         self,
@@ -87,21 +87,21 @@ class Executor:
         *iterables: Iterable[Any],
         context: contextvars.Context | None = None,
     ) -> AsyncIterator[R]:
-        jobs = [
+        work_items = [
             await self.submit(fn(*args), context=context)
             for args in zip(*iterables, strict=False)
         ]
 
         try:
             # reverse to keep finishing order
-            jobs.reverse()
-            while jobs:
+            work_items.reverse()
+            while work_items:
                 # Careful not to keep a reference to the popped future
-                yield await jobs.pop()
+                yield await work_items.pop()
         finally:
             # The current task was cancelled, e.g. by timeout
-            for job in jobs:
-                job.cancel()
+            for work_item in work_items:
+                work_item.cancel()
 
     async def amap[R, *IT](
         self,
@@ -110,21 +110,21 @@ class Executor:
         *iterables: AsyncIterable[Any],
         context: contextvars.Context | None = None,
     ) -> AsyncIterator[R]:
-        jobs = [
+        work_items = [
             await self.submit(fn(*args), context=context)
             async for args in _azip(*iterables)
         ]
 
         try:
             # reverse to keep finishing order
-            jobs.reverse()
-            while jobs:
+            work_items.reverse()
+            while work_items:
                 # Careful not to keep a reference to the popped future
-                yield await jobs.pop()
+                yield await work_items.pop()
         finally:
             # The current task was cancelled, e.g. by timeout
-            for job in jobs:
-                job.cancel()
+            for work_item in work_items:
+                work_item.cancel()
 
     async def shutdown(
         self,
@@ -138,10 +138,10 @@ class Executor:
         if cancel_futures:
             # Drain all work items from the queue, and then cancel their
             # associated futures.
-            while not self._jobs.empty():
-                self._jobs.get_nowait().cancel()
+            while not self._work_items.empty():
+                self._work_items.get_nowait().cancel()
 
-        self._jobs.shutdown()
+        self._work_items.shutdown()
         if not wait:
             for task in self._tasks:
                 if not task.done():
@@ -185,13 +185,13 @@ class Executor:
     async def _work(self, prefix: str) -> None:
         try:
             while True:
-                await (await self._jobs.get()).execute(prefix)
+                await (await self._work_items.get()).execute(prefix)
         except QueueShutDown:
             pass
 
 
 @dataclasses.dataclass
-class _Job[R]:
+class _WorkItem[R]:
     loop: AbstractEventLoop
     context: contextvars.Context
     coro: Coroutine[Any, Any, R]
@@ -231,7 +231,7 @@ class _Job[R]:
             # Suppress RuntimeWarning: coroutine 'coro' was never awaited.
             # The warning is possible if .shutdown() was called
             # with cancel_futures=True and there are non-started coroutines
-            # in pedning jobs list.
+            # in pedning work_items list.
             del self.coro
 
 
