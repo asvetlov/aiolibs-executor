@@ -82,7 +82,7 @@ class Executor:
         context: contextvars.Context | None = None,
     ) -> AsyncIterator[R]:
         jobs = [
-            self.submit_nowait(fn(*args), context=context)
+            self.submit(fn(*args), context=context)
             for args in zip(*iterables, strict=False)
         ]
 
