@@ -75,11 +75,24 @@ jobs:
     #     file: .coverage.xml
 
 
+  check:
+    name: Check
+    needs:
+    - lint
+    - unit
+    runs-on: ubuntu-latest
+    if: always()
+    steps:
+    - name: Decide whether the needed jobs succeeded or failed
+      uses: re-actors/alls-green@release/v1
+      with:
+        jobs: ${{ toJSON(needs) }}
+
   approve:
     name: Approve bot PR
     runs-on: ubuntu-latest
     if: endsWith(github.actor, '[bot]')
-    needs: [lint, test]
+    needs: check
     permissions:
       contents: write
       pull-requests: write
