@@ -34,7 +34,7 @@ jobs:
         restore-keys: |
           poetry-
     - name: Install dependencies
-      run: make setup
+      run: make install
     - name: Lint
       run: |
         echo "::add-matcher::.github/actionlint-matcher.json"
@@ -55,7 +55,7 @@ jobs:
       run: python3 -m pip install --user pipx && python3 -m pipx ensurepath
     - name: Install Poetry with pipx
       run: |
-        pipx install poetry
+        pipx install poetry pre-commit
     - name: Setup Python dependencies cache
       uses: actions/cache@v4
       with:
@@ -71,7 +71,7 @@ jobs:
         restore-keys: |
           pre-commit-
     - name: Install dependencies
-      run: make setup
+      run: make install
     - name: Run unit tests
       run: make test
     # Restore me later

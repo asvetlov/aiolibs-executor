@@ -18,6 +18,7 @@ clean:
 	git clean -d -f
 
 
-.PHONY: setup
-setup:
+.PHONY: install
+install:
 	poetry install --with dev
+	pre-commit install
