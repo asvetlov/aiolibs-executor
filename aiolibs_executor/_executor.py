@@ -19,10 +19,12 @@ from collections.abc import (
     Coroutine,
     Iterable,
 )
-from typing import Any
+from types import TracebackType
+from typing import Any, Self, final
 from warnings import catch_warnings
 
 
+@final
 class Executor:
     _counter = itertools.count().__next__
 
@@ -49,6 +51,17 @@ class Executor:
         # there is no need for adjusting tasks count on the fly like
         # ThreadPoolExecutor or ProcessPoolExecutor do.
         self._tasks: list[Task[None]] = []
+
+    async def __aenter__(self) -> Self:
+        return self
+
+    async def __aexit__(
+        self,
+        exc_type: type[BaseException] | None,
+        exc_val: BaseException | None,
+        exc_tb: TracebackType | None,
+    ) -> None:
+        await self.shutdown()
 
     def submit_nowait[R](
         self,
