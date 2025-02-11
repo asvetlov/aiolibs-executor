@@ -160,9 +160,6 @@ class Executor:
                 del excs
 
     def _lazy_init(self) -> AbstractEventLoop:
-        # Lazy init exists for allowing Executor instantiation then there is no
-        # active event loop yet.
-        # .submit(), .map(), and .shutdown() all require running loop though.
         if self._shutdown:
             raise RuntimeError("cannot schedule new futures after shutdown")
         if self._loop is not None:
