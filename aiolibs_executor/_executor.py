@@ -1,3 +1,4 @@
+import contextvars
 import dataclasses
 import itertools
 import threading
@@ -18,7 +19,6 @@ from collections.abc import (
     Coroutine,
     Iterable,
 )
-from contextvars import Context, copy_context
 from types import TracebackType
 from typing import Any, Self, final
 from warnings import catch_warnings
@@ -67,7 +67,7 @@ class Executor:
         self,
         coro: Coroutine[Any, Any, R],
         *,
-        context: Context | None = None,
+        context: contextvars.Context | None = None,
     ) -> Future[R]:
         work_item = self._make_item(coro, context)
         self._work_items.put_nowait(work_item)
@@ -77,7 +77,7 @@ class Executor:
         self,
         coro: Coroutine[Any, Any, R],
         *,
-        context: Context | None = None,
+        context: contextvars.Context | None = None,
     ) -> Future[R]:
         work_item = self._make_item(coro, context)
         await self._work_items.put(work_item)
@@ -88,7 +88,7 @@ class Executor:
         fn: Callable[..., Coroutine[Any, Any, R]],
         /,
         *iterables: Iterable[Any],
-        context: Context | None = None,
+        context: contextvars.Context | None = None,
     ) -> AsyncIterator[R]:
         futs = [
             await self.submit(fn(*args), context=context)
@@ -102,7 +102,7 @@ class Executor:
         fn: Callable[..., Coroutine[Any, Any, R]],
         /,
         *iterables: AsyncIterable[Any],
-        context: Context | None = None,
+        context: contextvars.Context | None = None,
     ) -> AsyncIterator[R]:
         futs = [
             await self.submit(fn(*args), context=context)
@@ -184,14 +184,10 @@ class Executor:
         return loop
 
     def _make_item[R](
-        self, coro: Coroutine[Any, Any, R], context: Context | None
+        self, coro: Coroutine[Any, Any, R], context: contextvars.Context | None
     ) -> "_WorkItem[R]":
         loop = self._lazy_init()
-        return _WorkItem(
-            coro,
-            loop,
-            context if context is not None else copy_context(),
-        )
+        return _WorkItem(coro, loop, context)
 
     async def _process_items[R](
         self, futs: list[Future[R]]
@@ -222,7 +218,7 @@ _global_lock = threading.Lock()
 class _WorkItem[R]:
     coro: Coroutine[Any, Any, R]
     loop: AbstractEventLoop
-    context: Context
+    context: contextvars.Context | None
 
     def __post_init__(self) -> None:
         fut: Future[R] = self.loop.create_future()
