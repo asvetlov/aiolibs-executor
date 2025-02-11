@@ -30,7 +30,7 @@ line-length = 79
 [tool.ruff.lint]
 select = [
     "E", "F", "I", "C90", "UP", "B", "ASYNC", "N", "A", "C4", "EM", "FA", "ICN",
-    "G", "PIE", "T20", "PYI", "PT", "RET", "PTH", "T10"
+    "G", "PIE", "T20", "PYI", "RET", "PTH", "T10"
 ]
 ignore = [
   "A003",  # Class attribute "..." is shadowing a Python builtin

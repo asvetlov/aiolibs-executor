@@ -22,7 +22,9 @@ class Executor:
 
     def __init__(
         self,
+        *,
         max_workers: int | None = None,
+        max_pending: int = 0,
         task_name_prefix: str = "",
     ) -> None:
         if max_workers is None:
@@ -36,13 +38,13 @@ class Executor:
         self._init_context = contextvars.copy_context()
         self._init = False
         self._shutdown = False
-        self._jobs: Queue[_Job[Any]] = Queue()
+        self._jobs: Queue[_Job[Any]] = Queue(max_pending)
         # tasks are much cheaper than threads or processes,
         # there is no need for adjusting tasks count on the fly like
         # ThreadPoolExecutor or ProcessPoolExecutor do.
         self._tasks: list[Task[None]] = []
 
-    def submit[R](
+    def submit_nowait[R](
         self,
         coro: Coroutine[Any, Any, R],
         *,
@@ -57,7 +59,7 @@ class Executor:
         self._jobs.put_nowait(job)
         return job.future
 
-    async def asubmit[R](
+    async def submit[R](
         self,
         coro: Coroutine[Any, Any, R],
         *,
@@ -80,7 +82,7 @@ class Executor:
         context: contextvars.Context | None = None,
     ) -> AsyncIterator[R]:
         jobs = [
-            self.submit(fn(*args), context=context)
+            self.submit_nowait(fn(*args), context=context)
             for args in zip(*iterables, strict=False)
         ]
 
