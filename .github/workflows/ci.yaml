@@ -55,7 +55,7 @@ jobs:
       run: python3 -m pip install --user pipx && python3 -m pipx ensurepath
     - name: Install Poetry with pipx
       run: |
-        pipx install poetry
+        pipx install poetry pre-commit
     - name: Setup Python dependencies cache
       uses: actions/cache@v4
       with:
