@@ -79,7 +79,7 @@ jobs:
     name: Check
     needs:
     - lint
-    - unit
+    - test
     runs-on: ubuntu-latest
     if: always()
     steps:
