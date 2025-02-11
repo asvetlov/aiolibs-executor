@@ -244,7 +244,7 @@ def _sync[R](task: Task[R]) -> Callable[[Future[R]], None]:
     return f
 
 
-async def _azip(*iterables: AsyncIterator[Any]) -> AsyncIterator[Any]:
+async def _azip(*iterables: AsyncIterable[Any]) -> AsyncIterator[Any]:
     its = [aiter(ait) for ait in iterables]
     while True:
         try:
