@@ -194,16 +194,6 @@ class Executor:
             )
         return loop
 
-    def _make_item[R](
-        self,
-        coro: Coroutine[Any, Any, R],
-        context: contextvars.Context | None,
-        loop: AbstractEventLoop | None,
-    ) -> "_WorkItem[R]":
-        if loop is None:
-            loop = self._lazy_init()
-        return _WorkItem(coro, loop, context)
-
     async def _process_items[R](
         self, work_items: list["_WorkItem[R]"]
     ) -> AsyncIterator[R]:
