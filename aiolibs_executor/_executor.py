@@ -69,12 +69,7 @@ class Executor:
         *,
         context: contextvars.Context | None = None,
     ) -> Future[R]:
-        self._lazy_init()
-        work_item = _WorkItem(
-            get_running_loop(),
-            context if context is not None else self._init_context,
-            coro,
-        )
+        work_item = self._make_item(coro, context)
         self._work_items.put_nowait(work_item)
         return work_item.future
 
@@ -84,12 +79,7 @@ class Executor:
         *,
         context: contextvars.Context | None = None,
     ) -> Future[R]:
-        self._lazy_init()
-        work_item = _WorkItem(
-            get_running_loop(),
-            context if context is not None else self._init_context,
-            coro,
-        )
+        work_item = self._make_item(coro, context)
         await self._work_items.put(work_item)
         return work_item.future
 
@@ -100,21 +90,12 @@ class Executor:
         *iterables: Iterable[Any],
         context: contextvars.Context | None = None,
     ) -> AsyncIterator[R]:
-        work_items = [
+        futs = [
             await self.submit(fn(*args), context=context)
             for args in zip(*iterables, strict=False)
         ]
-
-        try:
-            # reverse to keep finishing order
-            work_items.reverse()
-            while work_items:
-                # Careful not to keep a reference to the popped future
-                yield await work_items.pop()
-        finally:
-            # The current task was cancelled, e.g. by timeout
-            for work_item in work_items:
-                work_item.cancel()
+        async for ret in self._process_items(futs):
+            yield ret
 
     async def amap[R, *IT](
         self,
@@ -123,21 +104,12 @@ class Executor:
         *iterables: AsyncIterable[Any],
         context: contextvars.Context | None = None,
     ) -> AsyncIterator[R]:
-        work_items = [
+        futs = [
             await self.submit(fn(*args), context=context)
             async for args in _azip(*iterables)
         ]
-
-        try:
-            # reverse to keep finishing order
-            work_items.reverse()
-            while work_items:
-                # Careful not to keep a reference to the popped future
-                yield await work_items.pop()
-        finally:
-            # The current task was cancelled, e.g. by timeout
-            for work_item in work_items:
-                work_item.cancel()
+        async for ret in self._process_items(futs):
+            yield ret
 
     async def shutdown(
         self,
@@ -195,6 +167,30 @@ class Executor:
                 )
             )
 
+    def _make_item[R](
+        self, coro: Coroutine[Any, Any, R], context: contextvars.Context | None
+    ) -> "_WorkItem[R]":
+        self._lazy_init()
+        return _WorkItem(
+            coro,
+            get_running_loop(),
+            context if context is not None else self._init_context,
+        )
+
+    async def _process_items[R](
+        self, futs: list[Future[R]]
+    ) -> AsyncIterator[R]:
+        try:
+            # reverse to keep finishing order
+            futs.reverse()
+            while futs:
+                # Careful not to keep a reference to the popped future
+                yield await futs.pop()
+        finally:
+            # The current task was cancelled, e.g. by timeout
+            for fut in futs:
+                fut.cancel()
+
     async def _work(self, prefix: str) -> None:
         try:
             while True:
@@ -205,12 +201,13 @@ class Executor:
 
 @dataclasses.dataclass
 class _WorkItem[R]:
+    coro: Coroutine[Any, Any, R]
     loop: AbstractEventLoop
     context: contextvars.Context
-    coro: Coroutine[Any, Any, R]
 
     def __post_init__(self) -> None:
-        self.future: Future[R] = self.loop.create_future()
+        fut: Future[R] = self.loop.create_future()
+        self.future = fut
 
     async def execute(self, prefix: str) -> None:
         fut = self.future
