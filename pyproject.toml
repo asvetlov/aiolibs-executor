@@ -22,6 +22,7 @@ enable = true
 version = "0.0.0"
 [tool.poetry.group.dev.dependencies]
 mypy = "^1.15.0"
+coverage = "^7.6.11"
 
 [tool.ruff]
 target-version = "py313"

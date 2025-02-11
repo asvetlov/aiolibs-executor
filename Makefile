@@ -8,9 +8,16 @@ lint:
 
 .PHONY: test
 test:
-	poetry run python -m unittest discover
+	poetry run coverage run -m unittest discover
+	poetry run coverage xml
+	poetry run coverage html
 
 
 .PHONY: clean
 clean:
 	git clean -d -f
+
+
+.PHONY: setup
+setup:
+	poetry install --with dev
