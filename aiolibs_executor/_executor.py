@@ -74,7 +74,7 @@ class Executor:
         await self._jobs.put(job)
         return job.future
 
-    def map[R, *IT](
+    async def map[R, *IT](
         self,
         fn: Callable[..., Coroutine[Any, Any, R]],
         /,
@@ -86,21 +86,16 @@ class Executor:
             for args in zip(*iterables, strict=False)
         ]
 
-        # Yield must be hidden in closure so that the futures are submitted
-        # before the first iterator value is required.
-        async def result_iterator() -> AsyncIterator[R]:
-            try:
-                # reverse to keep finishing order
-                jobs.reverse()
-                while jobs:
-                    # Careful not to keep a reference to the popped future
-                    yield await jobs.pop()
-            finally:
-                # The current task was cancelled, e.g. by timeout
-                for job in jobs:
-                    job.cancel()
-
-        return result_iterator()
+        try:
+            # reverse to keep finishing order
+            jobs.reverse()
+            while jobs:
+                # Careful not to keep a reference to the popped future
+                yield await jobs.pop()
+        finally:
+            # The current task was cancelled, e.g. by timeout
+            for job in jobs:
+                job.cancel()
 
     async def shutdown(
         self,
