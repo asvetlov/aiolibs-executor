@@ -34,7 +34,7 @@ jobs:
         restore-keys: |
           poetry-
     - name: Install dependencies
-      run: make setup
+      run: make install
     - name: Lint
       run: |
         echo "::add-matcher::.github/actionlint-matcher.json"
@@ -71,7 +71,7 @@ jobs:
         restore-keys: |
           pre-commit-
     - name: Install dependencies
-      run: make setup
+      run: make install
     - name: Run unit tests
       run: make test
     # Restore me later
