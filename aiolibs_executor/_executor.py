@@ -69,7 +69,8 @@ class Executor:
         *,
         context: contextvars.Context | None = None,
     ) -> Future[R]:
-        work_item = self._make_item(coro, context)
+        loop = self._lazy_init()
+        work_item = _WorkItem(coro, loop, context)
         self._work_items.put_nowait(work_item)
         return work_item.future
 
@@ -79,7 +80,8 @@ class Executor:
         *,
         context: contextvars.Context | None = None,
     ) -> Future[R]:
-        work_item = self._make_item(coro, context)
+        loop = self._lazy_init()
+        work_item = _WorkItem(coro, loop, context)
         await self._work_items.put(work_item)
         return work_item.future
 
@@ -90,11 +92,13 @@ class Executor:
         *iterables: Iterable[Any],
         context: contextvars.Context | None = None,
     ) -> AsyncIterator[R]:
-        futs = [
-            await self.submit(fn(*args), context=context)
-            for args in zip(*iterables, strict=False)
-        ]
-        async for ret in self._process_items(futs):
+        loop = self._lazy_init()
+        work_items: list[_WorkItem[R]] = []
+        for args in zip(*iterables, strict=False):
+            work_item = _WorkItem(fn(*args), loop, context)
+            await self._work_items.put(work_item)
+            work_items.append(work_item)
+        async for ret in self._process_items(work_items):
             yield ret
 
     async def amap[R, *IT](
@@ -104,11 +108,18 @@ class Executor:
         *iterables: AsyncIterable[Any],
         context: contextvars.Context | None = None,
     ) -> AsyncIterator[R]:
-        futs = [
-            await self.submit(fn(*args), context=context)
-            async for args in _azip(*iterables)
-        ]
-        async for ret in self._process_items(futs):
+        loop = self._lazy_init()
+        work_items: list[_WorkItem[R]] = []
+        its = [aiter(ait) for ait in iterables]
+        while True:
+            try:
+                args = [await anext(it) for it in its]
+                work_item = _WorkItem(fn(*args), loop, context)
+                await self._work_items.put(work_item)
+                work_items.append(work_item)
+            except StopAsyncIteration:
+                break
+        async for ret in self._process_items(work_items):
             yield ret
 
     async def shutdown(
@@ -149,9 +160,6 @@ class Executor:
                 del excs
 
     def _lazy_init(self) -> AbstractEventLoop:
-        # Lazy init exists for allowing Executor instantiation then there is no
-        # active event loop yet.
-        # .submit(), .map(), and .shutdown() all require running loop though.
         if self._shutdown:
             raise RuntimeError("cannot schedule new futures after shutdown")
         if self._loop is not None:
@@ -176,32 +184,23 @@ class Executor:
         for i in range(self._max_workers):
             task_name = self._task_name_prefix + f"_{i}"
             self._tasks.append(
-                loop.create_task(
-                    self._work(task_name),
-                    name=task_name,
-                )
+                loop.create_task(self._work(task_name), name=task_name)
             )
         return loop
 
-    def _make_item[R](
-        self, coro: Coroutine[Any, Any, R], context: contextvars.Context | None
-    ) -> "_WorkItem[R]":
-        loop = self._lazy_init()
-        return _WorkItem(coro, loop, context)
-
     async def _process_items[R](
-        self, futs: list[Future[R]]
+        self, work_items: list["_WorkItem[R]"]
     ) -> AsyncIterator[R]:
         try:
             # reverse to keep finishing order
-            futs.reverse()
-            while futs:
+            work_items.reverse()
+            while work_items:
                 # Careful not to keep a reference to the popped future
-                yield await futs.pop()
-        finally:
+                yield await work_items.pop().future
+        except CancelledError:
             # The current task was cancelled, e.g. by timeout
-            for fut in futs:
-                fut.cancel()
+            for work_item in work_items:
+                work_item.cancel()
 
     async def _work(self, prefix: str) -> None:
         try:
@@ -221,8 +220,7 @@ class _WorkItem[R]:
     context: contextvars.Context | None
 
     def __post_init__(self) -> None:
-        fut: Future[R] = self.loop.create_future()
-        self.future = fut
+        self.future: Future[R] = self.loop.create_future()
 
     async def execute(self, prefix: str) -> None:
         fut = self.future
@@ -235,9 +233,7 @@ class _WorkItem[R]:
             except AttributeError:
                 pass
             task = self.loop.create_task(
-                self.coro,
-                context=self.context,
-                name=name,
+                self.coro, context=self.context, name=name
             )
             fut.add_done_callback(_sync(task))
             ret = await task
@@ -267,13 +263,3 @@ def _sync[R](task: Task[R]) -> Callable[[Future[R]], None]:
                 task.cancel()
 
     return f
-
-
-async def _azip(*iterables: AsyncIterable[Any]) -> AsyncIterator[Any]:
-    its = [aiter(ait) for ait in iterables]
-    while True:
-        try:
-            items = [await anext(it) for it in its]
-            yield tuple(items)
-        except StopAsyncIteration:
-            break
