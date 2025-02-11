@@ -184,10 +184,7 @@ class Executor:
         for i in range(self._max_workers):
             task_name = self._task_name_prefix + f"_{i}"
             self._tasks.append(
-                loop.create_task(
-                    self._work(task_name),
-                    name=task_name,
-                )
+                loop.create_task(self._work(task_name), name=task_name)
             )
         return loop
 
@@ -236,9 +233,7 @@ class _WorkItem[R]:
             except AttributeError:
                 pass
             task = self.loop.create_task(
-                self.coro,
-                context=self.context,
-                name=name,
+                self.coro, context=self.context, name=name
             )
             fut.add_done_callback(_sync(task))
             ret = await task
