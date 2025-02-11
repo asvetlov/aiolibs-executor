@@ -36,6 +36,7 @@ select = [
 ignore = [
   "A003",  # Class attribute "..." is shadowing a Python builtin
   "EM101", # Exception must not use a string literal, assign to variable first
+  "EM102", # Exception must not use an f-string literal, assign to variable first
   "N818"
 ]
 
