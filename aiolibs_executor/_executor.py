@@ -30,7 +30,9 @@ class Executor:
         if max_workers <= 0:
             raise ValueError("max_workers must be greater than 0")
         self._max_workers = max_workers
-        self._task_name_prefix = task_name_prefix or f"Executor-{Executor._counter()}"
+        self._task_name_prefix = (
+            task_name_prefix or f"Executor-{Executor._counter()}"
+        )
         self._init_context = contextvars.copy_context()
         self._init = False
         self._shutdown = False
@@ -123,7 +125,8 @@ class Executor:
         excs = [
             exc
             for exc in rets
-            if isinstance(exc, BaseException) and type(exc) is not CancelledError
+            if isinstance(exc, BaseException)
+            and type(exc) is not CancelledError
         ]
         if excs:
             try:
@@ -147,7 +150,9 @@ class Executor:
             task_name = self._task_name_prefix + f"_{i}"
             self._tasks.append(
                 create_task(
-                    self._work(task_name), name=task_name, context=self._init_context
+                    self._work(task_name),
+                    name=task_name,
+                    context=self._init_context,
                 )
             )
 

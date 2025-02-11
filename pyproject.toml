@@ -25,6 +25,7 @@ mypy = "^1.15.0"
 
 [tool.ruff]
 target-version = "py313"
+line-length = 79
 
 [tool.ruff.lint]
 select = [
