@@ -1,6 +1,7 @@
 import contextvars
 import dataclasses
 import itertools
+import threading
 from asyncio import (
     AbstractEventLoop,
     CancelledError,
@@ -8,7 +9,6 @@ from asyncio import (
     Queue,
     QueueShutDown,
     Task,
-    create_task,
     gather,
     get_running_loop,
 )
@@ -44,7 +44,7 @@ class Executor:
             task_name_prefix or f"Executor-{Executor._counter()}"
         )
         self._init_context = contextvars.copy_context()
-        self._init = False
+        self._loop: AbstractEventLoop | None = None
         self._shutdown = False
         self._work_items: Queue[_WorkItem[Any]] = Queue(max_pending)
         # tasks are much cheaper than threads or processes,
@@ -53,6 +53,7 @@ class Executor:
         self._tasks: list[Task[None]] = []
 
     async def __aenter__(self) -> Self:
+        self._lazy_init()
         return self
 
     async def __aexit__(
@@ -118,7 +119,7 @@ class Executor:
         cancel_futures: bool = False,
     ) -> None:
         self._shutdown = True
-        if not self._init:
+        if self._loop is None:
             return
         if cancel_futures:
             # Drain all work items from the queue, and then cancel their
@@ -148,32 +149,49 @@ class Executor:
             finally:
                 del excs
 
-    def _lazy_init(self) -> None:
+    def _lazy_init(self) -> AbstractEventLoop:
         # Lazy init exists for allowing Executor instantiation then there is no
         # active event loop yet.
         # .submit(), .map(), and .shutdown() all require running loop though.
         if self._shutdown:
             raise RuntimeError("cannot schedule new futures after shutdown")
-        if self._init:
-            return
-        self._init = True
+        if self._loop is not None:
+            try:
+                loop = get_running_loop()
+            except RuntimeError:
+                # do nothing and reuse previously stored self._loop
+                # to allow .submit_nowait() call from non-asyncio code
+                return self._loop
+            else:
+                # the loop check technique is borrowed from asyncio.locks.
+                if loop is not self._loop:
+                    raise RuntimeError(
+                        f"{self!r} is bound to a different event loop"
+                    )
+                return loop
+        loop = get_running_loop()
+        if self._loop is None:
+            with _global_lock:
+                if self._loop is None:
+                    self._loop = loop
         for i in range(self._max_workers):
             task_name = self._task_name_prefix + f"_{i}"
             self._tasks.append(
-                create_task(
+                loop.create_task(
                     self._work(task_name),
                     name=task_name,
                     context=self._init_context,
                 )
             )
+        return loop
 
     def _make_item[R](
         self, coro: Coroutine[Any, Any, R], context: contextvars.Context | None
     ) -> "_WorkItem[R]":
-        self._lazy_init()
+        loop = self._lazy_init()
         return _WorkItem(
             coro,
-            get_running_loop(),
+            loop,
             context if context is not None else self._init_context,
         )
 
@@ -197,6 +215,9 @@ class Executor:
                 await (await self._work_items.get()).execute(prefix)
         except QueueShutDown:
             pass
+
+
+_global_lock = threading.Lock()
 
 
 @dataclasses.dataclass
