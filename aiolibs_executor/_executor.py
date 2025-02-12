@@ -183,7 +183,10 @@ class Executor:
         else:
             loop = get_running_loop()
             with _global_lock:
-                if self._loop is None:
+                # double-checked locking has a very low chance to have
+                # self._loop assigned by another thread;
+                # test suite doen't cover this case
+                if self._loop is None:  # pragma: no branch
                     self._loop = loop
             for i in range(self._num_workers):
                 task_name = self._task_name_prefix + f"_{i}"
@@ -205,6 +208,7 @@ class Executor:
             # The current task was cancelled, e.g. by timeout
             for work_item in work_items:
                 work_item.cancel()
+            raise
 
     async def _work(self, prefix: str) -> None:
         try:
@@ -222,6 +226,7 @@ class _WorkItem[R]:
     coro: Coroutine[Any, Any, R]
     loop: AbstractEventLoop
     context: contextvars.Context | None
+    task: Task[R] | None = None
 
     def __post_init__(self) -> None:
         self.future: Future[R] = self.loop.create_future()
@@ -229,17 +234,20 @@ class _WorkItem[R]:
     async def execute(self, prefix: str) -> None:
         fut = self.future
         if fut.done():
+            self.cleanup()
             return
+        name = prefix
         try:
-            name = prefix
-            try:
-                name += f" [{self.coro.__qualname__}]"
-            except AttributeError:
-                pass
-            task = self.loop.create_task(
-                self.coro, context=self.context, name=name
-            )
-            fut.add_done_callback(_sync(task))
+            name += f" [{self.coro.__qualname__}]"
+        except AttributeError:  # pragma: no cover
+            # Some custom coroutines and mocks could not have __qualname__,
+            # don't add a suffix in this case.
+            pass
+        self.task = task = self.loop.create_task(
+            self.coro, context=self.context, name=name
+        )
+        fut.add_done_callback(self.done_callback)
+        try:
             ret = await task
         except CancelledError:
             fut.cancel()
@@ -253,6 +261,9 @@ class _WorkItem[R]:
     def cancel(self) -> None:
         fut = self.future
         fut.cancel()
+        self.cleanup()
+
+    def cleanup(self) -> None:
         with catch_warnings(action="ignore", category=RuntimeWarning):
             # Suppress RuntimeWarning: coroutine 'coro' was never awaited.
             # The warning is possible if .shutdown() was called
@@ -260,10 +271,6 @@ class _WorkItem[R]:
             # in pedning work_items list.
             del self.coro
 
-
-def _sync[R](task: Task[R]) -> Callable[[Future[R]], None]:
-    def f(fut: Future[R]) -> None:
-        if fut.cancelled():
-            task.cancel()
-
-    return f
+    def done_callback(self, fut: Future[R]) -> None:
+        if self.task is not None and fut.cancelled():
+            self.task.cancel()
