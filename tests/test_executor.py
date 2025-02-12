@@ -293,8 +293,10 @@ class TestShutdown(BaseTestCase):
 
     async def test_shutdown_cancel_futures(self) -> None:
         executor = self.make_executor(1)
+        started = asyncio.Event()
 
         async def f(ev: asyncio.Event) -> None:
+            started.set()
             await ev.wait()
 
         ev1 = asyncio.Event()
@@ -305,8 +307,7 @@ class TestShutdown(BaseTestCase):
         # pending
         fut2 = await executor.submit(f(ev2))
 
-        # wait to put submitted request into a worker
-        await asyncio.sleep(0.01)
+        await started.wait()
         asyncio.get_running_loop().call_later(0.01, ev1.set)
 
         await executor.shutdown(cancel_futures=True)
@@ -318,13 +319,15 @@ class TestShutdown(BaseTestCase):
 
     async def test_shutdown_no_wait(self) -> None:
         executor = self.make_executor(1)
+        started = asyncio.Event()
 
         async def f() -> None:
+            started.set()
             await asyncio.sleep(60)
 
         fut = await executor.submit(f())
         # wait to put submitted request into a worker
-        await asyncio.sleep(0.01)
+        await started.wait()
 
         await executor.shutdown(wait=False)
 
@@ -344,6 +347,137 @@ class TestShutdown(BaseTestCase):
             ok = True
 
         self.assertTrue(ok)
+
+
+class TestCancellation(BaseTestCase):
+    async def test_cancelling_future_cancels_task(self) -> None:
+        executor = self.make_executor()
+        cancelled = asyncio.Event()
+        started = asyncio.Event()
+
+        async def f() -> None:
+            started.set()
+            try:
+                await asyncio.sleep(60)
+            except asyncio.CancelledError:
+                cancelled.set()
+                raise
+
+        fut = await executor.submit(f())
+        await started.wait()
+
+        fut.cancel()
+        await cancelled.wait()
+
+    async def test_cancelling_map_cancels_tasks(self) -> None:
+        executor = self.make_executor()
+        cancelled = set()
+        ev = asyncio.Event()
+
+        async def f(i: int) -> None:
+            try:
+                await asyncio.sleep(60)
+            except asyncio.CancelledError:
+                cancelled.add(i)
+                if len(cancelled) == 5:
+                    ev.set()
+                raise
+
+        with self.assertRaises(TimeoutError):
+            async with asyncio.timeout(0.01):
+                async for _ in executor.map(f, range(5)):
+                    pass
+
+        await ev.wait()
+        self.assertEqual(cancelled, {0, 1, 2, 3, 4})
+
+
+class TestExceptions(BaseTestCase):
+    async def test_dont_execute_with_done_future(self) -> None:
+        executor = self.make_executor(1)
+        started = asyncio.Event()
+
+        async def f(num: int, ev: asyncio.Event) -> int:
+            started.set()
+            await ev.wait()
+            return num
+
+        ev1 = asyncio.Event()
+        # executing
+        fut1 = await executor.submit(f(1, ev1))
+
+        ev2 = asyncio.Event()
+        # pending
+        fut2 = await executor.submit(f(2, ev2))
+
+        # wait to put submitted request into a worker
+        await started.wait()
+
+        # Setting the result is strange, user should never do it.
+        # But the executor should not crash at least
+        fut2.set_result(10)
+
+        ev1.set()
+        ev2.set()
+
+        self.assertEqual(await fut1, 1)
+        self.assertEqual(await fut2, 10)
+
+    async def test_dont_override_done_future(self) -> None:
+        executor = self.make_executor()
+        started = asyncio.Event()
+
+        async def f(num: int, ev: asyncio.Event) -> int:
+            started.set()
+            await ev.wait()
+            return num
+
+        ev = asyncio.Event()
+        fut = await executor.submit(f(1, ev))
+
+        # wait to put submitted request into a worker
+        await started.wait()
+
+        # Setting the result is strange, user should never do it.
+        # But the executor should not crash at least
+        fut.set_result(10)
+        ev.set()
+
+        self.assertEqual(await fut, 10)
+
+    async def test_coro_raises_exception(self) -> None:
+        executor = self.make_executor()
+
+        async def f() -> None:
+            raise Exception("test exception")
+
+        fut = await executor.submit(f())
+
+        with self.assertRaisesRegex(Exception, "test exception"):
+            await fut
+
+    async def test_dont_override_exception_in_future(self) -> None:
+        executor = self.make_executor()
+        started = asyncio.Event()
+
+        async def f(ev: asyncio.Event) -> int:
+            started.set()
+            await ev.wait()
+            raise Exception("test exception")
+
+        ev = asyncio.Event()
+        fut = await executor.submit(f(ev))
+
+        # wait to put submitted request into a worker
+        await started.wait()
+
+        # Setting the result is strange, user should never do it.
+        # But the executor should not crash at least
+        fut.set_exception(Exception("override"))
+        ev.set()
+
+        with self.assertRaisesRegex(Exception, "override"):
+            await fut
 
 
 if __name__ == "__main__":
