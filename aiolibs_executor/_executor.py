@@ -148,13 +148,14 @@ class Executor:
     async def map[R](
         self,
         fn: Callable[..., Coroutine[Any, Any, R]],
+        iterable: Iterable[Any],
         /,
         *iterables: Iterable[Any],
         context: contextvars.Context | None = None,
     ) -> AsyncIterator[R]:
         loop = self._lazy_init()
         work_items: list[_WorkItem[R]] = []
-        for args in zip(*iterables, strict=False):
+        for args in zip(iterable, *iterables, strict=False):
             work_item = _WorkItem(fn(*args), loop, context)
             await self._work_items.put(work_item)
             work_items.append(work_item)
@@ -219,12 +220,14 @@ class Executor:
     async def amap[R](
         self,
         fn: Callable[..., Coroutine[Any, Any, R]],
+        iterable: AsyncIterable[Any],
+        /,
         *iterables: AsyncIterable[Any],
         context: contextvars.Context | None = None,
     ) -> AsyncIterator[R]:
         loop = self._lazy_init()
         work_items: list[_WorkItem[R]] = []
-        its = [aiter(ait) for ait in iterables]
+        its = [aiter(iterable)] + [aiter(ait) for ait in iterables]
         while True:
             try:
                 args = [await anext(it) for it in its]
