@@ -53,7 +53,7 @@ jobs:
     - name: Install Python
       uses: actions/setup-python@v5
       with:
-        python-version: pyver
+        python-version: ${{ matrix.pyver }}
     - name: Install pipx
       run: python3 -m pip install --user pipx && python3 -m pipx ensurepath
     - name: Install Poetry with pipx
