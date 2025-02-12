@@ -20,7 +20,7 @@ from collections.abc import (
     Iterable,
 )
 from types import TracebackType
-from typing import Any, Self, final
+from typing import Any, Self, final, overload
 from warnings import catch_warnings
 
 
@@ -68,6 +68,7 @@ class Executor:
     def submit_nowait[R](
         self,
         coro: Coroutine[Any, Any, R],
+        /,
         *,
         context: contextvars.Context | None = None,
     ) -> Future[R]:
@@ -79,6 +80,7 @@ class Executor:
     async def submit[R](
         self,
         coro: Coroutine[Any, Any, R],
+        /,
         *,
         context: contextvars.Context | None = None,
     ) -> Future[R]:
@@ -87,7 +89,63 @@ class Executor:
         await self._work_items.put(work_item)
         return work_item.future
 
-    async def map[R, *IT](
+    @overload
+    def map[R, T1](
+        self,
+        fn: Callable[[T1], Coroutine[Any, Any, R]],
+        it1: Iterable[T1],
+        /,
+        *,
+        context: contextvars.Context | None = None,
+    ) -> AsyncIterator[R]: ...
+    @overload
+    def map[R, T1, T2](
+        self,
+        fn: Callable[[T1, T2], Coroutine[Any, Any, R]],
+        it1: Iterable[T1],
+        it2: Iterable[T2],
+        /,
+        *,
+        context: contextvars.Context | None = None,
+    ) -> AsyncIterator[R]: ...
+    @overload
+    def map[R, T1, T2, T3](
+        self,
+        fn: Callable[[T1, T2, T3], Coroutine[Any, Any, R]],
+        it1: Iterable[T1],
+        it2: Iterable[T2],
+        it3: Iterable[T3],
+        /,
+        *,
+        context: contextvars.Context | None = None,
+    ) -> AsyncIterator[R]: ...
+    @overload
+    def map[R, T1, T2, T3, T4](
+        self,
+        fn: Callable[[T1, T2, T3, T4], Coroutine[Any, Any, R]],
+        it1: Iterable[T1],
+        it2: Iterable[T2],
+        it3: Iterable[T3],
+        it4: Iterable[T4],
+        /,
+        *,
+        context: contextvars.Context | None = None,
+    ) -> AsyncIterator[R]: ...
+    @overload
+    def map[R, T1, T2, T3, T4, T5](
+        self,
+        fn: Callable[[T1, T2, T3, T4, T5], Coroutine[Any, Any, R]],
+        it1: Iterable[T1],
+        it2: Iterable[T2],
+        it3: Iterable[T3],
+        it4: Iterable[T4],
+        it5: Iterable[T5],
+        /,
+        *,
+        context: contextvars.Context | None = None,
+    ) -> AsyncIterator[R]: ...
+
+    async def map[R](
         self,
         fn: Callable[..., Coroutine[Any, Any, R]],
         /,
@@ -103,10 +161,64 @@ class Executor:
         async for ret in self._process_items(work_items):
             yield ret
 
-    async def amap[R, *IT](
+    @overload
+    def amap[R, T1](
+        self,
+        fn: Callable[[T1], Coroutine[Any, Any, R]],
+        it1: AsyncIterable[T1],
+        /,
+        *,
+        context: contextvars.Context | None = None,
+    ) -> AsyncIterator[R]: ...
+    @overload
+    def amap[R, T1, T2](
+        self,
+        fn: Callable[[T1, T2], Coroutine[Any, Any, R]],
+        it1: AsyncIterable[T1],
+        it2: AsyncIterable[T2],
+        /,
+        *,
+        context: contextvars.Context | None = None,
+    ) -> AsyncIterator[R]: ...
+    @overload
+    def amap[R, T1, T2, T3](
+        self,
+        fn: Callable[[T1, T2, T3], Coroutine[Any, Any, R]],
+        it1: AsyncIterable[T1],
+        it2: AsyncIterable[T2],
+        it3: AsyncIterable[T3],
+        /,
+        *,
+        context: contextvars.Context | None = None,
+    ) -> AsyncIterator[R]: ...
+    @overload
+    def amap[R, T1, T2, T3, T4](
+        self,
+        fn: Callable[[T1, T2, T3, T4], Coroutine[Any, Any, R]],
+        it1: AsyncIterable[T1],
+        it2: AsyncIterable[T2],
+        it3: AsyncIterable[T3],
+        it4: AsyncIterable[T4],
+        /,
+        *,
+        context: contextvars.Context | None = None,
+    ) -> AsyncIterator[R]: ...
+    @overload
+    def amap[R, T1, T2, T3, T4, T5](
+        self,
+        fn: Callable[[T1, T2, T3, T4, T5], Coroutine[Any, Any, R]],
+        it1: AsyncIterable[T1],
+        it2: AsyncIterable[T2],
+        it3: AsyncIterable[T3],
+        it4: AsyncIterable[T4],
+        it5: AsyncIterable[T5],
+        /,
+        *,
+        context: contextvars.Context | None = None,
+    ) -> AsyncIterator[R]: ...
+    async def amap[R](
         self,
         fn: Callable[..., Coroutine[Any, Any, R]],
-        /,
         *iterables: AsyncIterable[Any],
         context: contextvars.Context | None = None,
     ) -> AsyncIterator[R]:
