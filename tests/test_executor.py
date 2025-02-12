@@ -499,6 +499,17 @@ class TestTaskNames(BaseTestCase):
         ret = await (await executor.submit(f()))
         self.assertRegex(ret, rf"Executor-(\d+)_(\d+)\[{f.__qualname__}\]")
 
+    async def test_custom_name(self) -> None:
+        executor = self.make_executor(task_name_prefix="custom")
+
+        async def f() -> str:
+            task = asyncio.current_task()
+            assert task is not None
+            return task.get_name()
+
+        ret = await (await executor.submit(f()))
+        self.assertRegex(ret, rf"custom_(\d+)\[{f.__qualname__}\]")
+
 
 if __name__ == "__main__":
     unittest.main()
