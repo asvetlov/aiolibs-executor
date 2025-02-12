@@ -299,11 +299,11 @@ class TestShutdown(BaseTestCase):
 
         ev1 = asyncio.Event()
         # executing
-        f1 = await executor.submit(f(ev1))
+        fut1 = await executor.submit(f(ev1))
 
         ev2 = asyncio.Event()
         # pending
-        f2 = await executor.submit(f(ev2))
+        fut2 = await executor.submit(f(ev2))
 
         # wait to put submitted request into a worker
         await asyncio.sleep(0.01)
@@ -311,10 +311,10 @@ class TestShutdown(BaseTestCase):
 
         await executor.shutdown(cancel_futures=True)
 
-        self.assertTrue(f1.done())
-        self.assertIsNone(f1.result())
+        self.assertTrue(fut1.done())
+        self.assertIsNone(fut1.result())
 
-        self.assertTrue(f2.cancelled())
+        self.assertTrue(fut2.cancelled())
 
     async def test_shutdown_no_wait(self) -> None:
         executor = self.make_executor(1)
@@ -322,20 +322,20 @@ class TestShutdown(BaseTestCase):
         async def f() -> None:
             await asyncio.sleep(60)
 
-        f = await executor.submit(f())
+        fut = await executor.submit(f())
         # wait to put submitted request into a worker
         await asyncio.sleep(0.01)
 
         await executor.shutdown(wait=False)
 
-        self.assertTrue(f.cancelled())
+        self.assertTrue(fut.cancelled())
 
     async def test_shutdown_wt_exception_from_worker(self) -> None:
         executor = self.make_executor()
         executor._lazy_init()
 
         # emulate unhandled error by putting bad data into the queue
-        await executor._work_items.put(None)
+        await executor._work_items.put(None)  # type: ignore[arg-type]
 
         ok = False
         try:
