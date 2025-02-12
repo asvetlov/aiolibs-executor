@@ -30,16 +30,18 @@ class Executor:
 
     def __init__(
         self,
+        num_workers: int = 0,
         *,
-        max_workers: int | None = None,
         max_pending: int = 0,
         task_name_prefix: str = "",
     ) -> None:
-        if max_workers is None:
-            max_workers = 100
-        if max_workers <= 0:
-            raise ValueError("max_workers must be greater than 0")
-        self._max_workers = max_workers
+        if num_workers == 0:
+            num_workers = 100
+        if num_workers <= 0:
+            raise ValueError("num_workers must be greater than 0")
+        if max_pending < 0:
+            raise ValueError("max_pending must be non-negative number")
+        self._num_workers = num_workers
         self._task_name_prefix = (
             task_name_prefix or f"Executor-{Executor._counter()}"
         )
@@ -176,17 +178,17 @@ class Executor:
                         f"{self!r} is bound to a different event loop"
                     )
                 return loop
-        loop = get_running_loop()
-        if self._loop is None:
+        else:
+            loop = get_running_loop()
             with _global_lock:
                 if self._loop is None:
                     self._loop = loop
-        for i in range(self._max_workers):
-            task_name = self._task_name_prefix + f"_{i}"
-            self._tasks.append(
-                loop.create_task(self._work(task_name), name=task_name)
-            )
-        return loop
+            for i in range(self._num_workers):
+                task_name = self._task_name_prefix + f"_{i}"
+                self._tasks.append(
+                    loop.create_task(self._work(task_name), name=task_name)
+                )
+            return loop
 
     async def _process_items[R](
         self, work_items: list["_WorkItem[R]"]
