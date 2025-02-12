@@ -353,7 +353,7 @@ class _WorkItem[R]:
             return
         name = prefix
         try:
-            name += f" [{self.coro.__qualname__}]"
+            name += f"[{self.coro.__qualname__}]"
         except AttributeError:  # pragma: no cover
             # Some custom coroutines and mocks could not have __qualname__,
             # don't add a suffix in this case.
