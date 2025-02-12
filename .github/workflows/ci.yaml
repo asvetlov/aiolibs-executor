@@ -74,13 +74,12 @@ jobs:
       run: make install
     - name: Run unit tests
       run: make test
-    # Restore me later
-    # - name: Upload coverage to Codecov
-    #   uses: codecov/codecov-action@v5
-    #   with:
-    #     token: ${{ secrets.CODECOV_TOKEN }}
-    #     file: .coverage.xml
-
+    - name: Upload coverage to Codecov
+      uses: codecov/codecov-action@v5
+      with:
+        token: ${{ secrets.CODECOV_TOKEN }}
+        files: .coverage.xml
+        slug: aio-libs/aiolibs-executor
 
   check:
     name: Check
