@@ -130,6 +130,8 @@ class Executor:
         *,
         cancel_futures: bool = False,
     ) -> None:
+        if self._shutdown:
+            return
         self._shutdown = True
         if self._loop is None:
             return
@@ -142,10 +144,10 @@ class Executor:
         self._work_items.shutdown()
         if not wait:
             for task in self._tasks:
-                if not task.done():
-                    task.cancel()
+                task.cancel()
 
         rets = await gather(*self._tasks, return_exceptions=True)
+        self._tasks.clear()  # cleanup cycle references
         excs = [
             exc
             for exc in rets
@@ -239,6 +241,8 @@ class _WorkItem[R]:
             )
             fut.add_done_callback(_sync(task))
             ret = await task
+        except CancelledError:
+            fut.cancel()
         except BaseException as ex:
             if not fut.done():
                 fut.set_exception(ex)
@@ -248,8 +252,7 @@ class _WorkItem[R]:
 
     def cancel(self) -> None:
         fut = self.future
-        if not fut.done():
-            fut.cancel()
+        fut.cancel()
         with catch_warnings(action="ignore", category=RuntimeWarning):
             # Suppress RuntimeWarning: coroutine 'coro' was never awaited.
             # The warning is possible if .shutdown() was called
@@ -261,7 +264,6 @@ class _WorkItem[R]:
 def _sync[R](task: Task[R]) -> Callable[[Future[R]], None]:
     def f(fut: Future[R]) -> None:
         if fut.cancelled():
-            if not task.done():
-                task.cancel()
+            task.cancel()
 
     return f
