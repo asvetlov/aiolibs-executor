@@ -44,13 +44,16 @@ jobs:
     name: Run tests
     runs-on: ubuntu-latest
     timeout-minutes: 10
+    strategy:
+      matrix:
+        pyver: ['3.11', '3.12', '3.13']
     steps:
     - name: Checkout commit
       uses: actions/checkout@v4
     - name: Install Python
       uses: actions/setup-python@v5
       with:
-        python-version: '3.13'
+        python-version: pyver
     - name: Install pipx
       run: python3 -m pip install --user pipx && python3 -m pipx ensurepath
     - name: Install Poetry with pipx
