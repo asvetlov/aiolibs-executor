@@ -480,5 +480,25 @@ class TestExceptions(BaseTestCase):
             await fut
 
 
+class TestTaskNames(BaseTestCase):
+    async def test_worker_name(self) -> None:
+        executor = self.make_executor()
+        executor._lazy_init()
+        self.assertRegex(
+            executor._tasks[0].get_name(), r"Executor-(\d+)_(\d+)"
+        )
+
+    async def test_submit_name(self) -> None:
+        executor = self.make_executor()
+
+        async def f() -> str:
+            task = asyncio.current_task()
+            assert task is not None
+            return task.get_name()
+
+        ret = await (await executor.submit(f()))
+        self.assertRegex(ret, rf"Executor-(\d+)_(\d+)\[{f.__qualname__}\]")
+
+
 if __name__ == "__main__":
     unittest.main()
