@@ -10,8 +10,8 @@ from aiolibs_executor import Executor
 class BaseTestCase(unittest.IsolatedAsyncioTestCase):
     def make_executor(
         self,
-        *,
         num_workers: int = 0,
+        *,
         max_pending: int = 0,
         task_name_prefix: str = "",
     ) -> Executor:
@@ -279,6 +279,71 @@ class TestInit(BaseTestCase):
             RuntimeError, "is bound to a different event loop"
         ):
             await asyncio.to_thread(f)
+
+
+class TestShutdown(BaseTestCase):
+    async def test_shutdown_not_inited(self) -> None:
+        executor = self.make_executor()
+        await executor.shutdown()
+
+    async def test_shutdown_twice(self) -> None:
+        executor = self.make_executor()
+        await executor.shutdown()
+        await executor.shutdown()
+
+    async def test_shutdown_cancel_futures(self) -> None:
+        executor = self.make_executor(1)
+
+        async def f(ev: asyncio.Event) -> None:
+            await ev.wait()
+
+        ev1 = asyncio.Event()
+        # executing
+        fut1 = await executor.submit(f(ev1))
+
+        ev2 = asyncio.Event()
+        # pending
+        fut2 = await executor.submit(f(ev2))
+
+        # wait to put submitted request into a worker
+        await asyncio.sleep(0.01)
+        asyncio.get_running_loop().call_later(0.01, ev1.set)
+
+        await executor.shutdown(cancel_futures=True)
+
+        self.assertTrue(fut1.done())
+        self.assertIsNone(fut1.result())
+
+        self.assertTrue(fut2.cancelled())
+
+    async def test_shutdown_no_wait(self) -> None:
+        executor = self.make_executor(1)
+
+        async def f() -> None:
+            await asyncio.sleep(60)
+
+        fut = await executor.submit(f())
+        # wait to put submitted request into a worker
+        await asyncio.sleep(0.01)
+
+        await executor.shutdown(wait=False)
+
+        self.assertTrue(fut.cancelled())
+
+    async def test_shutdown_wt_exception_from_worker(self) -> None:
+        executor = self.make_executor()
+        executor._lazy_init()
+
+        # emulate unhandled error by putting bad data into the queue
+        await executor._work_items.put(None)  # type: ignore[arg-type]
+
+        ok = False
+        try:
+            await executor.shutdown()
+        except* AttributeError:
+            ok = True
+
+        self.assertTrue(ok)
 
 
 if __name__ == "__main__":
