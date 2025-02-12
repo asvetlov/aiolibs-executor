@@ -60,6 +60,9 @@ addopts = """
 branch = true
 source = ["aiolibs_executor"]
 
+[tool.coverage.xml]
+output = ".coverage.xml"
+
 [tool.mypy]
 files = ["aiolibs_executor", "tests"]
 strict = true
